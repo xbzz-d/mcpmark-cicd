@@ -153,7 +153,30 @@ jobs:
             // Always fetch latest issue data to get up-to-date labels
             const fresh = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
             const labels = (fresh.data.labels || []).map(l => l.name);
+
+            // Priority normalization: ensure exactly one priority label exists
+            const priorities = ['priority-critical','priority-high','priority-medium','priority-low'];
+            const presentPriorities = labels.filter(l => priorities.includes(l));
+            let finalPriority = presentPriorities[0];
             const titleLC = (issue.title || '').toLowerCase();
+            const bodyLC = (issue.body || '').toLowerCase();
+            const hay = `${titleLC} ${bodyLC}`;
+            const computePriority = () => {
+              if (['critical','urgent','production','outage'].some(k => hay.includes(k))) return 'priority-critical';
+              if (['important','high','blocking'].some(k => hay.includes(k))) return 'priority-high';
+              if (['low','nice-to-have','minor'].some(k => hay.includes(k))) return 'priority-low';
+              if (['medium','normal'].some(k => hay.includes(k))) return 'priority-medium';
+              return 'priority-medium';
+            };
+            const computed = computePriority();
+            if (!finalPriority || priorities.indexOf(computed) < priorities.indexOf(finalPriority)) {
+              finalPriority = computed;
+            }
+            // Remove all existing priority labels and set final one
+            for (const p of presentPriorities) {
+              try { await github.rest.issues.removeLabel({owner, repo, issue_number: issueNumber, name: p}); } catch {}
+            }
+            await github.rest.issues.addLabels({owner, repo, issue_number: issueNumber, labels: [finalPriority]});
 
             async function addLabels(labelsToAdd) {
               if (!labelsToAdd?.length) return;
@@ -197,8 +220,8 @@ jobs:
             }
 
             // Milestone for high/critical priority based on current labels
-            const needsMilestone = labels.includes('priority-high') || labels.includes('priority-critical');
-            if (needsMilestone) {
+            const finalIsHigh = finalPriority === 'priority-high' || finalPriority === 'priority-critical';
+            if (finalIsHigh) {
               try {
                 const ms = await github.rest.issues.listMilestones({owner, repo, state: 'open'});
                 let milestoneNum = ms.data.find(m => m.title === 'v1.0.0')?.number;
@@ -213,12 +236,13 @@ jobs:
             }
 
             // Move status from needs-triage to needs-review
-            if (labels.includes('needs-triage')) {
+            const latest = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
+            const latestLabels = (latest.data.labels || []).map(l => l.name);
+            if (latestLabels.includes('needs-triage')) {
               await removeLabel('needs-triage');
             }
-            // Fetch again to avoid duplicate add
-            const postUpdate = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
-            const postLabels = (postUpdate.data.labels || []).map(l => l.name);
-            if (!postLabels.includes('needs-review')) {
+            const latestAfter = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
+            const la = (latestAfter.data.labels || []).map(l => l.name);
+            if (!la.includes('needs-review')) {
               await addLabels(['needs-review']);
             }
