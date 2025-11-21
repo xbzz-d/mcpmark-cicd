@@ -56,7 +56,9 @@ jobs:
             const titleLC = title.toLowerCase();
             const bodyLC = body.toLowerCase();
 
-            const currentLabels = (context.payload.issue.labels || []).map(l => l.name);
+            // Fetch latest labels to avoid relying on webhook payload
+            const issueRes = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
+            const currentLabels = (issueRes.data.labels || []).map(l => l.name);
 
             async function addLabels(labels) {
               if (!labels || labels.length === 0) return;
@@ -147,7 +149,11 @@ jobs:
             const repo = context.repo.repo;
             const issue = context.payload.issue;
             const issueNumber = issue.number;
-            const labels = (issue.labels || []).map(l => l.name);
+
+            // Always fetch latest issue data to get up-to-date labels
+            const fresh = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
+            const labels = (fresh.data.labels || []).map(l => l.name);
+            const titleLC = (issue.title || '').toLowerCase();
 
             async function addLabels(labelsToAdd) {
               if (!labelsToAdd?.length) return;
@@ -173,20 +179,24 @@ jobs:
               await github.rest.issues.createComment({owner, repo, issue_number: issueNumber, body: `Welcome @${author}! Thanks for opening your first issue in this repository. We're glad to have you here.`});
             }
 
-            // Type-specific responses
+            // Type-specific responses (based on labels or title keywords)
+            const isBug = labels.includes('bug') || titleLC.includes('bug');
+            const isEpic = labels.includes('epic') || titleLC.includes('epic');
+            const isMaintenance = labels.includes('maintenance') || titleLC.includes('maintenance');
+
             let response = null;
-            if (labels.includes('bug')) {
+            if (isBug) {
               response = "Thanks for the report! Bug Report Guidelines:\n- Provide reproduction steps\n- Include expected vs actual behavior\n- Environment details\n\nWe'll review this shortly.";
-            } else if (labels.includes('epic')) {
+            } else if (isEpic) {
               response = "Thanks for the feature proposal! Feature Request Process:\n- Define scope and acceptance criteria\n- Link related tasks and subtasks\n- Discuss design considerations\n\nWe've created initial subtasks for tracking.";
-            } else if (labels.includes('maintenance')) {
+            } else if (isMaintenance) {
               response = "Thanks for keeping things tidy! Maintenance Guidelines:\n- Describe the areas impacted\n- Note risks and mitigations\n- Outline cleanup steps\n\nWe'll review and schedule as appropriate.";
             }
             if (response) {
               await github.rest.issues.createComment({owner, repo, issue_number: issueNumber, body: response});
             }
 
-            // Milestone for high/critical priority
+            // Milestone for high/critical priority based on current labels
             const needsMilestone = labels.includes('priority-high') || labels.includes('priority-critical');
             if (needsMilestone) {
               try {
@@ -206,6 +216,9 @@ jobs:
             if (labels.includes('needs-triage')) {
               await removeLabel('needs-triage');
             }
-            if (!labels.includes('needs-review')) {
+            // Fetch again to avoid duplicate add
+            const postUpdate = await github.rest.issues.get({owner, repo, issue_number: issueNumber});
+            const postLabels = (postUpdate.data.labels || []).map(l => l.name);
+            if (!postLabels.includes('needs-review')) {
               await addLabels(['needs-review']);
             }
