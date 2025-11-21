@@ -169,7 +169,9 @@ jobs:
               return 'priority-medium';
             };
             const computed = computePriority();
-            if (!finalPriority || priorities.indexOf(computed) < priorities.indexOf(finalPriority)) {
+            // Choose highest priority: critical > high > medium > low
+            const rank = p => priorities.indexOf(p);
+            if (!finalPriority || rank(computed) < rank(finalPriority)) {
               finalPriority = computed;
             }
             // Remove all existing priority labels and set final one
@@ -219,7 +221,7 @@ jobs:
               await github.rest.issues.createComment({owner, repo, issue_number: issueNumber, body: response});
             }
 
-            // Milestone for high/critical priority based on current labels
+            // Milestone for high/critical priority based on final normalized priority
             const finalIsHigh = finalPriority === 'priority-high' || finalPriority === 'priority-critical';
             if (finalIsHigh) {
               try {
